@@ -23,6 +23,7 @@ import numpy as np
 import re
 from nltk.stem import *
 from nltk.stem.snowball import SnowballStemmer
+from tqdm import tqdm
 
 stemmer = SnowballStemmer("english")
 import stop_words
@@ -51,19 +52,21 @@ import re
 
 only_words = '[^a-z0-9\' ]+'
 
-with open('data_text.json', 'r') as fp:
-    dict_posts = json.load(fp)
+dataDirectory = '../Dataset/GabData/'
+with gzip.open(dataDirectory + 'user_Sentenses_Raw.pklz', 'rb') as fp:
+    dict_user = pickle.load(fp)
 
 users_sentences = {}
 
-for user in dict_posts:
+for user in tqdm(dict_user):
     users_sentences[user] = []
-    for post_text in dict_posts[user]:
+    for post_text in dict_user[user]['sentences']:
         text = preprocess.tweet_preprocess2(post_text)
         text = re.sub(only_words, '', text.lower())
         users_sentences[user].append([stemmer.stem(elem) for elem in text.split(' ') if elem not in stop_words])
+    # users_sentences[user] = procPosts
 
-with open('twitter_user_Sentenses_proc.json', 'w') as f:
+with open('gab_user_Sentenses_proc.json', 'w') as f:
     json.dump(users_sentences, f)
 
 print("Done")

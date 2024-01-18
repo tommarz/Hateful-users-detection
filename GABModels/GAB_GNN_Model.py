@@ -1,19 +1,25 @@
 import torch
 import torch.nn.functional as F
-from torch_geometric.nn import AGNNConv
 import pickle
 import json
 import gzip
 import numpy as np
+import random
+import os
 
 from sklearn.metrics import *
 from tqdm import tqdm
 import warnings
+from GAB_AGNN_Model import Net as AGNN
+from GAB_ARMA_Model import Net as ARMA
+from GAB_CHEBY_Model import Net as CHEBY
+from GAB_GAT_Model import Net as GAT
+from GAB_GCN_Model import Net as GCN
+from GAB_GraphSage_Model import Net as GraphSage
 
 warnings.simplefilter(action='ignore', category=UserWarning)
 
 # Read the hateful users and non hateful users
-
 dataDirectory = '../Dataset/GabData/'
 with open(dataDirectory + 'haters.json') as json_file:
     haters = json.load(json_file)
@@ -151,25 +157,6 @@ def evalMetric(y_true, y_pred):
 num_features = 100
 num_classes = 2
 
-print("AGNN")
-
-
-class Net(torch.nn.Module):
-    def __init__(self):
-        super(Net, self).__init__()
-        self.lin1 = torch.nn.Linear(num_features, 32)
-        self.prop1 = AGNNConv(requires_grad=True)
-        self.lin2 = torch.nn.Linear(32, 2)
-
-    def forward(self):
-        x = X
-        x = F.dropout(x, training=self.training)
-        x = F.relu(self.lin1(x))
-        x = self.prop1(x, edge_index)
-        x = F.dropout(x, training=self.training)
-        x = self.lin2(x)
-        return F.log_softmax(x, dim=1)
-
 
 def train():
     model.train()
@@ -194,37 +181,37 @@ def test():
     return accs, Mf1_score, test_Metrics
 
 
-# def split_json_into_folds(file_path, k, seed):
-#     # Load JSON data
-#     file_name = file_path.split('/')[-1].split('.')[0]
-#     with open(file_path, 'r') as file:
-#         data = json.load(file)
-#
-#     # Shuffle the data with a seed
-#     random.seed(seed)
-#     random.shuffle(data)
-#
-#     # Calculate the size of each fold
-#     fold_size = np.ceil(len(data) / k).astype(int)
-#
-#     # Split the data into k folds
-#     folds = [data[i:i + fold_size] for i in range(0, len(data), fold_size)]
-#
-#     # Save each fold as a separate JSON file
-#     for i, fold in enumerate(folds):
-#         fold_path = os.path.join(dataDirectory, f'{file_name[:-2]}val{i + 1}.json')
-#         with open(fold_path, 'w') as file:
-#             json.dump(fold, file, indent=4)
-#
-#     print(f'Successfully split the data into {k} folds.')
-#
-#
-# k = len(validationFold)
-# seed = 42
-# file_path = os.path.join(dataDirectory, 'haters.json')
-# split_json_into_folds(file_path, k, seed)
-# file_path = os.path.join(dataDirectory, 'nonhaters.json')
-# split_json_into_folds(file_path, k, seed)
+def split_json_into_folds(file_path, k, seed):
+    # Load JSON data
+    file_name = file_path.split('/')[-1].split('.')[0]
+    with open(file_path, 'r') as file:
+        data = json.load(file)
+
+    # Shuffle the data with a seed
+    random.seed(seed)
+    random.shuffle(data)
+
+    # Calculate the size of each fold
+    fold_size = np.ceil(len(data) / k).astype(int)
+
+    # Split the data into k folds
+    folds = [data[i:i + fold_size] for i in range(0, len(data), fold_size)]
+
+    # Save each fold as a separate JSON file
+    for i, fold in enumerate(folds):
+        fold_path = os.path.join(dataDirectory, f'{file_name[:-2]}val{i + 1}.json')
+        with open(fold_path, 'w') as file:
+            json.dump(fold, file, indent=4)
+
+    print(f'Successfully split the data into {k} folds.')
+
+
+k = len(validationFold)
+seed = 0
+file_path = os.path.join(dataDirectory, 'haters.json')
+split_json_into_folds(file_path, k, seed)
+file_path = os.path.join(dataDirectory, 'nonhaters.json')
+split_json_into_folds(file_path, k, seed)
 
 test_accs = {}
 test_mF1Score = {}
@@ -240,82 +227,85 @@ fin_accs = {}
 val_macrof1Score = {}
 val_accs = {}
 
-for percent in tqdm(percentages):
-    print(percent)
-    test_accs[percent] = {}
-    test_mF1Score[percent] = {}
-    test_f1Score[percent] = {}
-    test_precision[percent] = {}
-    test_recall[percent] = {}
-    test_roc[percent] = {}
+for Net in [AGNN, ARMA, CHEBY, GAT, GCN, GraphSage]:
 
-    fin_macrof1Score[percent] = {}
-    fin_accs[percent] = {}
-    val_macrof1Score[percent] = {}
-    val_accs[percent] = {}
+    print(Net.__name__)
+    for percent in tqdm(percentages):
+        print(percent)
+        test_accs[percent] = {}
+        test_mF1Score[percent] = {}
+        test_f1Score[percent] = {}
+        test_precision[percent] = {}
+        test_recall[percent] = {}
+        test_roc[percent] = {}
 
-    for fold in validationFold:
-        with open(dataDirectory + 'hateval' + fold + '.json') as json_file:
-            test_haters = json.load(json_file)
-        with open(dataDirectory + 'nonhateval' + fold + '.json') as json_file:
-            test_non_haters = json.load(json_file)
+        fin_macrof1Score[percent] = {}
+        fin_accs[percent] = {}
+        val_macrof1Score[percent] = {}
+        val_accs[percent] = {}
 
-        train_haters = Diff(haters, test_haters)
-        train_non_haters = Diff(non_haters, test_non_haters)
+        for fold in validationFold:
+            with open(dataDirectory + 'hateval' + fold + '.json') as json_file:
+                test_haters = json.load(json_file)
+            with open(dataDirectory + 'nonhateval' + fold + '.json') as json_file:
+                test_non_haters = json.load(json_file)
 
-        print(fold)
-        print(percent, "Created features and labels and masking function")
+            train_haters = Diff(haters, test_haters)
+            train_non_haters = Diff(non_haters, test_non_haters)
 
-        test_accs[percent][fold] = []
-        test_mF1Score[percent][fold] = []
-        test_f1Score[percent][fold] = []
-        test_precision[percent][fold] = []
-        test_recall[percent][fold] = []
-        test_roc[percent][fold] = []
+            print(fold)
+            print(percent, "Created features and labels and masking function")
 
-        fin_macrof1Score[percent][fold] = []
-        fin_accs[percent][fold] = []
-        val_macrof1Score[percent][fold] = []
-        val_accs[percent][fold] = []
+            test_accs[percent][fold] = []
+            test_mF1Score[percent][fold] = []
+            test_f1Score[percent][fold] = []
+            test_precision[percent][fold] = []
+            test_recall[percent][fold] = []
+            test_roc[percent][fold] = []
 
-        print("-------------", fold, "------------------------")
-        for i in range(0, 5):
-            torch.manual_seed(30 + i)
-            np.random.seed(30 + i)
-            X, y = getData()
-            train_mask, val_mask, test_mask = ratio_split(percent, train_haters, train_non_haters,
-                                                          test_haters, test_non_haters, nodes)
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            model = Net().to(device)
-            edge_index = edge_index.to(device)
-            use_gpu = torch.cuda.is_available()
-            y = y.to(device)
-            X = X.to(device)
-            train_mask = train_mask.to(device)
-            test_mask = test_mask.to(device)
-            val_mask = val_mask.to(device)
-            optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
-            best_val_acc = best_MfScore = test_acc = test_mfscore = 0
-            evalObject = None
-            for epoch in range(1, 51):
-                train()
-                Accuracy, F1Score, test_Metrics = test()
-                if Accuracy[1] > best_val_acc:
-                    best_val_acc = Accuracy[1]
-                    test_acc = Accuracy[2]
-                    best_MfScore = F1Score[1]
-                    test_mfscore = F1Score[2]
-                    evalObject = copy.deepcopy(test_Metrics)
-                log = 'Epoch: {:03d}, Train: {:.4f}, Val: {:.4f}, Test: {:.4f}'
-                # print(log.format(epoch, train_acc, val_acc, test_acc))
-            test_accs[percent][fold].append(evalObject['accuracy'])
-            test_mF1Score[percent][fold].append(evalObject['mF1Score'])
-            test_f1Score[percent][fold].append(evalObject['f1Score'])
-            test_precision[percent][fold].append(evalObject['precision'])
-            test_recall[percent][fold].append(evalObject['recall'])
-            test_roc[percent][fold].append(evalObject['auc'])
-            val_macrof1Score[percent][fold].append(best_MfScore)
-            val_accs[percent][fold].append(best_val_acc)
+            fin_macrof1Score[percent][fold] = []
+            fin_accs[percent][fold] = []
+            val_macrof1Score[percent][fold] = []
+            val_accs[percent][fold] = []
+
+            print("-------------", fold, "------------------------")
+            for i in range(0, 5):
+                torch.manual_seed(30 + i)
+                np.random.seed(30 + i)
+                X, y = getData()
+                train_mask, val_mask, test_mask = ratio_split(percent, train_haters, train_non_haters,
+                                                              test_haters, test_non_haters, nodes)
+                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                model = Net().to(device)
+                edge_index = edge_index.to(device)
+                use_gpu = torch.cuda.is_available()
+                y = y.to(device)
+                X = X.to(device)
+                train_mask = train_mask.to(device)
+                test_mask = test_mask.to(device)
+                val_mask = val_mask.to(device)
+                optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
+                best_val_acc = best_MfScore = test_acc = test_mfscore = 0
+                evalObject = None
+                for epoch in range(1, 51):
+                    train()
+                    Accuracy, F1Score, test_Metrics = test()
+                    if Accuracy[1] > best_val_acc:
+                        best_val_acc = Accuracy[1]
+                        test_acc = Accuracy[2]
+                        best_MfScore = F1Score[1]
+                        test_mfscore = F1Score[2]
+                        evalObject = copy.deepcopy(test_Metrics)
+                    log = 'Epoch: {:03d}, Train: {:.4f}, Val: {:.4f}, Test: {:.4f}'
+                    # print(log.format(epoch, train_acc, val_acc, test_acc))
+                test_accs[percent][fold].append(evalObject['accuracy'])
+                test_mF1Score[percent][fold].append(evalObject['mF1Score'])
+                test_f1Score[percent][fold].append(evalObject['f1Score'])
+                test_precision[percent][fold].append(evalObject['precision'])
+                test_recall[percent][fold].append(evalObject['recall'])
+                test_roc[percent][fold].append(evalObject['auc'])
+                val_macrof1Score[percent][fold].append(best_MfScore)
+                val_accs[percent][fold].append(best_val_acc)
 
 
 def getFoldWiseResult(dict_fold):

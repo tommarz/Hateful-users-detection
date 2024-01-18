@@ -23,6 +23,7 @@ import numpy as np
 import re
 from nltk.stem import *
 from nltk.stem.snowball import SnowballStemmer
+from tqdm import tqdm
 
 stemmer = SnowballStemmer("english")
 import stop_words
@@ -51,19 +52,25 @@ import re
 
 only_words = '[^a-z0-9\' ]+'
 
-with open('data_text.json', 'r') as fp:
-    dict_posts = json.load(fp)
+# dataDirectory = '../Dataset/EchoData/'
+users_posts = pd.read_pickle(
+    "/sise/home/tommarz/hate_speech_detection/hate_networks/outputs/gab_networks/pickled_data/corpora_list_per_user.pkl")
 
-users_sentences = {}
+# users_sentences = {}
+#
+# for user, texts in users_posts.items():
+#     users_sentences[user] = []
+#     for post_text in texts:
+#         text = preprocess.tweet_preprocess2(post_text)
+#         text = re.sub(only_words, '', text.lower())
+#         users_sentences[user].append([stemmer.stem(elem) for elem in text.split(' ') if elem not in stop_words])
+#     # users_sentences[user] = procPosts
 
-for user in dict_posts:
-    users_sentences[user] = []
-    for post_text in dict_posts[user]:
-        text = preprocess.tweet_preprocess2(post_text)
-        text = re.sub(only_words, '', text.lower())
-        users_sentences[user].append([stemmer.stem(elem) for elem in text.split(' ') if elem not in stop_words])
+users_sentences = {user: [
+    [stemmer.stem(elem) for elem in re.sub(only_words, '', preprocess.tweet_preprocess2(post_text)).lower().split(' ')
+     if elem not in stop_words] for post_text in texts] for user, texts in tqdm(users_posts.items())}
 
-with open('twitter_user_Sentenses_proc.json', 'w') as f:
+with open('our_gab_user_Sentenses_proc.json', 'w') as f:
     json.dump(users_sentences, f)
 
 print("Done")

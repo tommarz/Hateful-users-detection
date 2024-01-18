@@ -1,19 +1,26 @@
-from torch_geometric.nn import GCNConv, ChebConv
 import torch
 import torch.nn.functional as F
+from torch_geometric.nn import AGNNConv, GCNConv, ARMAConv, ChebConv, GATConv, SAGEConv, SGConv, GINConv, GatedGraphConv
+
+# from Run_GNN import num_features, X, edge_index, num_classes
+
+from GNN import AGNN, CHEBY, ARMA, GCN, GAT, GraphSage
+from torch_geometric.data import Data, DataLoader
 import pickle
 import json
 import gzip
 import numpy as np
+
 from sklearn.metrics import *
 from tqdm import tqdm
 import warnings
+import networkx as nx
 
 warnings.simplefilter(action='ignore', category=UserWarning)
 
 # Read the hateful users and non hateful users
 
-dataDirectory = '../Dataset/GabData/'
+dataDirectory = '../Dataset/ParlerData/'
 with open(dataDirectory + 'haters.json') as json_file:
     haters = json.load(json_file)
 
@@ -22,13 +29,17 @@ with open(dataDirectory + 'nonhaters.json') as json_file:
 print("User Info loading Done")
 
 # Read the Doc2vec embedding of all the users
-with open(dataDirectory + 'GABDoc2vec100.p', 'rb') as handle:
+with open(dataDirectory + 'ParlerDoc2vec100.p', 'rb') as handle:
     doc_vectors = pickle.load(handle)
 print("Doc Vector Loading Done")
 
 # To 
-with gzip.open(dataDirectory + 'gabEdges1_5degree.pklgz') as fp:
-    final_list = pickle.load(fp)
+# with gzip.open(dataDirectory + 'gabEdges1_5degree.pklgz') as fp:
+#     final_list = pickle.load(fp)
+
+final_list = nx.read_weighted_edgelist(
+    "/sise/home/tommarz/parler-hate-speech/emnlp23/parler_labeld_users_echos_and_comments_ego_network_first_order.weighted.edgelist.gz",
+    nodetype=str, create_using=nx.DiGraph).edges()
 
 print("NetWork Loading Done")
 
@@ -87,8 +98,17 @@ edge_index = torch.LongTensor([rows, cols])
 
 print("Edge Index Created")
 
+data = Data(x=featureVector, edge_index=edge_index, y=labels)
+
+torch.save(data, dataDirectory + 'data.pt')
+
+print("Data Created")
+
 validationFold = ['1', '2', '3', '4', '5']
 percentages = [0.05, 0.1, 0.15, 0.20, 0.5, 0.8]
+
+num_features = 100
+num_classes = 2
 
 
 def Diff(li1, li2):
@@ -147,17 +167,86 @@ def evalMetric(y_true, y_pred):
             'precision': precisionScore, 'recall': recallScore}
 
 
-num_features = 100
-num_classes = 2
-
-print("GCN")
-
-
-class Net(torch.nn.Module):
+class AGNN(torch.nn.Module):
     def __init__(self):
-        super(Net, self).__init__()
-        self.conv1 = GCNConv(num_features, 32)
-        self.conv2 = GCNConv(32, 2)
+        super(AGNN, self).__init__()
+        self.lin1 = torch.nn.Linear(num_features, 32)
+        self.prop1 = AGNNConv(requires_grad=True)
+        self.lin2 = torch.nn.Linear(32, num_classes)
+
+    def forward(self):
+        x = X
+        x = F.dropout(x, training=self.training)
+        x = F.relu(self.lin1(x))
+        x = self.prop1(x, edge_index)
+        x = F.dropout(x, training=self.training)
+        x = self.lin2(x)
+        return F.log_softmax(x, dim=1)
+
+
+class ARMA(torch.nn.Module):
+    def __init__(self):
+        super(ARMA, self).__init__()
+        self.conv1 = ARMAConv(num_features, 32)
+        self.conv2 = ARMAConv(32, num_classes)
+
+    def forward(self):
+        x = X
+        x = F.relu(self.conv1(x, edge_index))
+        x = F.dropout(x, 0.2)
+        x = self.conv2(x, edge_index)
+        return F.log_softmax(x, dim=1)
+
+
+class GraphSage(torch.nn.Module):
+    def __init__(self):
+        super(GraphSage, self).__init__()
+        self.conv1 = SAGEConv(num_features, 32)
+        self.conv2 = SAGEConv(32, num_classes)
+
+    def forward(self):
+        x = X
+        # x = F.dropout(x, 0.5)
+        x = F.relu(self.conv1(x, edge_index))
+        x = F.dropout(x, 0.2)
+        x = self.conv2(x, edge_index)
+        return F.log_softmax(x, dim=1)
+
+
+class CHEBY(torch.nn.Module):
+    def __init__(self):
+        super(CHEBY, self).__init__()
+        self.conv1 = ChebConv(num_features, 32, K=1)
+        self.conv2 = ChebConv(32, num_classes, K=1)
+
+    def forward(self):
+        x = X
+        x = F.relu(self.conv1(x, edge_index))
+        x = F.dropout(x, 0.2)
+        x = self.conv2(x, edge_index)
+        return F.log_softmax(x, dim=1)
+
+
+class GAT(torch.nn.Module):
+    def __init__(self):
+        super(GAT, self).__init__()
+        self.conv1 = GATConv(num_features, 32, heads=2, concat=True)
+        self.conv2 = GATConv(2 * 32, num_classes, heads=2, concat=False)
+
+    def forward(self):
+        x = X
+        x = self.conv1(x, edge_index)
+        x = F.relu(x)
+        x = F.dropout(x, 0.2)
+        x = self.conv2(x, edge_index)
+        return x.log_softmax(dim=1)
+
+
+class GCN(torch.nn.Module):
+    def __init__(self):
+        super(GCN, self).__init__()
+        self.conv1 = GINConv(num_features, 32)
+        self.conv2 = GCNConv(32, num_classes)
 
     def forward(self):
         x = X
@@ -190,6 +279,38 @@ def test():
     return accs, Mf1_score, test_Metrics
 
 
+# def split_json_into_folds(file_path, k, seed):
+#     # Load JSON data
+#     file_name = file_path.split('/')[-1].split('.')[0]
+#     with open(file_path, 'r') as file:
+#         data = json.load(file)
+#
+#     # Shuffle the data with a seed
+#     random.seed(seed)
+#     random.shuffle(data)
+#
+#     # Calculate the size of each fold
+#     fold_size = np.ceil(len(data) / k).astype(int)
+#
+#     # Split the data into k folds
+#     folds = [data[i:i + fold_size] for i in range(0, len(data), fold_size)]
+#
+#     # Save each fold as a separate JSON file
+#     for i, fold in enumerate(folds):
+#         fold_path = os.path.join(dataDirectory, f'{file_name[:-2]}val{i + 1}.json')
+#         with open(fold_path, 'w') as file:
+#             json.dump(fold, file, indent=4)
+#
+#     print(f'Successfully split the data into {k} folds.')
+#
+#
+# k = len(validationFold)
+# seed = 42
+# file_path = os.path.join(dataDirectory, 'haters.json')
+# split_json_into_folds(file_path, k, seed)
+# file_path = os.path.join(dataDirectory, 'nonhaters.json')
+# split_json_into_folds(file_path, k, seed)
+
 test_accs = {}
 test_mF1Score = {}
 test_f1Score = {}
@@ -204,7 +325,10 @@ fin_accs = {}
 val_macrof1Score = {}
 val_accs = {}
 
-for percent in percentages:
+Net = AGNN
+
+for percent in tqdm(percentages):
+    print(percent)
     test_accs[percent] = {}
     test_mF1Score[percent] = {}
     test_f1Score[percent] = {}
@@ -217,7 +341,7 @@ for percent in percentages:
     val_macrof1Score[percent] = {}
     val_accs[percent] = {}
 
-    for fold in tqdm(validationFold):
+    for fold in validationFold:
         with open(dataDirectory + 'hateval' + fold + '.json') as json_file:
             test_haters = json.load(json_file)
         with open(dataDirectory + 'nonhateval' + fold + '.json') as json_file:
@@ -307,66 +431,70 @@ print("Test Roc:")
 getFoldWiseResult(test_roc)
 
 print("Validation Accuracy")
-ValFinalAcc= {}
+ValFinalAcc = {}
 
 for percent in percentages:
-   print("Val:"+str(percent))
-   ValFinalAcc[percent]=[]
-   for zz in validationFold:
-       print(np.mean(val_accs[percent][zz]), np.std(val_accs[percent][zz]), val_accs[percent][zz])
-       ValFinalAcc[percent].extend(val_accs[percent][zz])
+    print("Val:" + str(percent))
+    ValFinalAcc[percent] = []
+    for zz in validationFold:
+        print(np.mean(val_accs[percent][zz]), np.std(val_accs[percent][zz]), val_accs[percent][zz])
+        ValFinalAcc[percent].extend(val_accs[percent][zz])
 
 print("\nValidation Macro F1 Score")
-ValFinalF1= {}
+ValFinalF1 = {}
 
 for percent in percentages:
-   print("Validation F1-Score:"+str(percent))
-   ValFinalF1[percent] = []
-   for zz in validationFold:
-       print(np.mean(val_macrof1Score[percent][zz]), np.std(val_macrof1Score[percent][zz]), val_macrof1Score[percent][zz])
-       ValFinalF1[percent].extend(val_macrof1Score[percent][zz])
+    print("Validation F1-Score:" + str(percent))
+    ValFinalF1[percent] = []
+    for zz in validationFold:
+        print(np.mean(val_macrof1Score[percent][zz]), np.std(val_macrof1Score[percent][zz]),
+              val_macrof1Score[percent][zz])
+        ValFinalF1[percent].extend(val_macrof1Score[percent][zz])
 
 print("\nTest Accuracy")
-TestFinalAcc= {}
+TestFinalAcc = {}
 for percent in percentages:
-   print("Test:"+str(percent))
-   TestFinalAcc[percent]=[]
-   for zz in validationFold:
-       print(np.mean(test_accs[percent][zz]), np.std(test_accs[percent][zz]), test_accs[percent][zz])
-       TestFinalAcc[percent].extend(test_accs[percent][zz])
+    print("Test:" + str(percent))
+    TestFinalAcc[percent] = []
+    for zz in validationFold:
+        print(np.mean(test_accs[percent][zz]), np.std(test_accs[percent][zz]), test_accs[percent][zz])
+        TestFinalAcc[percent].extend(test_accs[percent][zz])
 
 print("\nTest Macro F1 Score")
-TestFinalF1= {}
+TestFinalF1 = {}
 for percent in percentages:
-   print("Test F1-Score:"+str(percent))
-   TestFinalF1[percent]=[]
-   for zz in validationFold:
-       print(np.mean(test_mF1Score[percent][zz]), np.std(test_mF1Score[percent][zz]), test_mF1Score[percent][zz])
-       TestFinalF1[percent].extend(test_mF1Score[percent][zz])
-##
+    print("Test F1-Score:" + str(percent))
+    TestFinalF1[percent] = []
+    for zz in validationFold:
+        print(np.mean(test_mF1Score[percent][zz]), np.std(test_mF1Score[percent][zz]),
+              test_mF1Score[percent][zz])
+        TestFinalF1[percent].extend(test_mF1Score[percent][zz])
+
 # print("\nFinal Test Accuracy")
-# endFinalAcc= {}
+# endFinalAcc = {}
 # for percent in percentages:
-#    print("Fin Test:"+str(percent))
-#    endFinalAcc[percent]=[]
-#    for zz in validationFold:
-#        print(np.mean(fin_accs[percent][zz]), np.std(fin_accs[percent][zz]), fin_accs[percent][zz])
-#        endFinalAcc[percent].extend(fin_accs[percent][zz])
+#     print("Fin Test:" + str(percent))
+#     endFinalAcc[percent] = []
+#     for zz in validationFold:
+#         print(np.mean(fin_accs[percent][zz]), np.std(fin_accs[percent][zz]), fin_accs[percent][zz])
+#         endFinalAcc[percent].extend(fin_accs[percent][zz])
 #
 # print("\nFinal Test Macro F1 Score")
-# endFinalF1= {}
+# endFinalF1 = {}
 # for percent in percentages:
-#    print("Fin Test F1-Score:"+str(percent))
-#    endFinalF1[percent]=[]
-#    for zz in validationFold:
-#        print(np.mean(fin_macrof1Score[percent][zz]), np.std(fin_macrof1Score[percent][zz]), fin_macrof1Score[percent][zz])
-#        endFinalF1[percent].extend(fin_macrof1Score[percent][zz])
-
+#     print("Fin Test F1-Score:" + str(percent))
+#     endFinalF1[percent] = []
+#     for zz in validationFold:
+#         print(np.mean(fin_macrof1Score[percent][zz]), np.std(fin_macrof1Score[percent][zz]),
+#               fin_macrof1Score[percent][zz])
+#         endFinalF1[percent].extend(fin_macrof1Score[percent][zz])
 
 print("-----------------------------------------------------------------------------------------")
 print("\n--Validation--")
+print("Accuracy:")
 for i in ValFinalAcc:
     print(i, np.mean(ValFinalAcc[i]), np.std(ValFinalAcc[i]))
+print("Macro F1-Score:")
 for i in ValFinalF1:
     print(i, np.mean(ValFinalF1[i]), np.std(ValFinalF1[i]))
 
@@ -381,8 +509,7 @@ for i in TestFinalF1:
 # print("\n--Fin--")
 # print("Accuracy:")
 # for i in endFinalAcc:
-#    print(i, np.mean(endFinalAcc[i]), np.std(endFinalAcc[i]))
+#     print(i, np.mean(endFinalAcc[i]), np.std(endFinalAcc[i]))
 # print("Macro F1-Score:")
 # for i in endFinalF1:
-#    print(i, np.mean(endFinalF1[i]), np.std(endFinalF1[i]))
-#
+#     print(i, np.mean(endFinalF1[i]), np.std(endFinalF1[i]))

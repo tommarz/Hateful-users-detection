@@ -21,8 +21,10 @@ import pandas as pd
 import networkx as nx
 import numpy as np
 import re
+import gzip
 from nltk.stem import *
 from nltk.stem.snowball import SnowballStemmer
+from tqdm import tqdm
 
 stemmer = SnowballStemmer("english")
 import stop_words
@@ -54,9 +56,10 @@ only_words = '[^a-z0-9\' ]+'
 with open('data_text.json', 'r') as fp:
     dict_posts = json.load(fp)
 
+
 users_sentences = {}
 
-for user in dict_posts:
+for user in tqdm(dict_posts):
     users_sentences[user] = []
     for post_text in dict_posts[user]:
         text = preprocess.tweet_preprocess2(post_text)
